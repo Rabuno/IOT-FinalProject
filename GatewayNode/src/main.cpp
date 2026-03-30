@@ -57,14 +57,33 @@ static void connectWifi() {
   const uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED) {
     delay(250);
+    Serial.print('.');
     if ((millis() - start) > 30000) break;
+  }
+  Serial.println();
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("WiFi OK, IP=");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("WiFi NOT connected (timeout).");
   }
 }
 
 static bool mqttEnsureConnected() {
   if (g_mqtt.connected()) return true;
   if (kIoUser[0] == '\0' || kIoKey[0] == '\0') return false;
-  return g_mqtt.connect(kMqttClientId, kIoUser, kIoKey);
+  Serial.print("MQTT connecting to ");
+  Serial.print(kMqttHost);
+  Serial.print(" as ");
+  Serial.print(kIoUser);
+  Serial.print(" ... ");
+  const bool ok = g_mqtt.connect(kMqttClientId, kIoUser, kIoKey);
+  Serial.println(ok ? "OK" : "FAIL");
+  if (!ok) {
+    Serial.print("MQTT state=");
+    Serial.println(g_mqtt.state());
+  }
+  return ok;
 }
 
 static bool publishFeed(const char* feedKey, const char* value) {
@@ -88,25 +107,39 @@ static bool publishFeedU8(const char* feedKey, uint8_t value) {
 }
 
 static void handleTelemetryLine(const char* line) {
+  Serial.print("[LoRa] ");
+  Serial.println(line);
+
   StaticJsonDocument<256> doc;
   const DeserializationError err = deserializeJson(doc, line);
-  if (err) return;
+  if (err) {
+    Serial.print("[JSON] parse fail: ");
+    Serial.println(err.c_str());
+    return;
+  }
 
   const float temp = doc["Temp"] | 0.0f;
   const float hum = doc["Hum"] | 0.0f;
   const uint8_t safety = doc["SafetyIndex"] | 0;
   const char* state = doc["State"] | "UNKNOWN";
 
-  (void)publishFeedFloat("temp", temp);
-  (void)publishFeedFloat("hum", hum);
-  (void)publishFeedU8("safetyindex", safety);
-  (void)publishFeed("state", state);
+  const bool ok1 = publishFeedFloat("temp", temp);
+  const bool ok2 = publishFeedFloat("hum", hum);
+  const bool ok3 = publishFeedU8("safetyindex", safety);
+  const bool ok4 = publishFeed("state", state);
+  Serial.print("[MQTT] publish: ");
+  Serial.print(ok1 && ok2 && ok3 && ok4 ? "OK" : "FAIL");
+  Serial.print(" (temp/hum/safetyindex/state)");
+  Serial.println();
 }
 
 void setup() {
   Serial.begin(115200);
+  Serial.println();
+  Serial.println("ESP32 Gateway boot");
 
   Serial2.begin(kLoraBaud, SERIAL_8N1, kLoraRxPin, kLoraTxPin);
+  Serial.println("LoRa UART2 ready (RX=14 TX=4 9600)");
 
   connectWifi();
   g_mqtt.setServer(kMqttHost, kMqttPort);
@@ -143,4 +176,3 @@ void loop() {
     }
   }
 }
-
